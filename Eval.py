@@ -77,6 +77,12 @@ class OneTokenState(StateInterface):
     def turn_handle(self, machine: 'GiftBall') -> bool:
         """Transition: ONE_TOKEN -> SOLD si des balles existent."""
         if machine.get_balls_remaining() > 0:
+            # Si on a exactement 2 balles, préparer une distribution spéciale
+            # (défausse de 2 balles en une vente)
+            if machine.get_balls_remaining() == 2:
+                machine.special_dispense_count = 2
+            else:
+                machine.special_dispense_count = 1
             machine.set_state(SoldState())
             return True
         return False
@@ -102,12 +108,18 @@ class SoldState(StateInterface):
     
     def finalize_sale(self, machine: 'GiftBall') -> None:
         """Finalise la vente et passe à l'état suivant."""
-        machine.balls_remaining -= 1
-        
-        if machine.get_balls_remaining() > 0:
-            machine.set_state(NoTokenState())
-        else:
+        # Utiliser le compteur spécial (1 par défaut, 2 si configuré)
+        to_remove = getattr(machine, 'special_dispense_count', 1)
+        machine.balls_remaining = max(0, machine.balls_remaining - to_remove)
+        # reset
+        machine.special_dispense_count = 1
+
+        if machine.get_balls_remaining() == 0:
             machine.set_state(NoBallsLeftState())
+        elif machine.get_balls_remaining() == 2:
+            machine.set_state(TwoBallsLeftState())
+        else:
+            machine.set_state(NoTokenState())
     
     def get_name(self) -> str:
         return "SOLD"
@@ -132,6 +144,26 @@ class NoBallsLeftState(StateInterface):
         return "NO_BALLS_LEFT"
 
 
+class TwoBallsLeftState(StateInterface):
+    """État: Il reste exactement deux balles (comportement spécial)."""
+
+    def insert_token(self, machine: 'GiftBall') -> bool:
+        """Transition: TWO_BALLS_LEFT -> ONE_TOKEN"""
+        machine.set_state(OneTokenState())
+        return True
+
+    def eject_token(self, machine: 'GiftBall') -> bool:
+        """Impossible d'éjecter sans jeton."""
+        return False
+
+    def turn_handle(self, machine: 'GiftBall') -> bool:
+        """Impossible de tourner la manivelle sans jeton."""
+        return False
+
+    def get_name(self) -> str:
+        return "TWO_BALLS_LEFT"
+
+
 class GiftBall:
     """Distributeur de balles surprise - machine à états avec Pattern State."""
     
@@ -142,8 +174,16 @@ class GiftBall:
         Args:
             initial_balls: Nombre initial de balles surprise disponibles
         """
-        self.current_state: StateInterface = NoTokenState()
+        # choisir l'état initial selon le stock
+        if initial_balls <= 0:
+            self.current_state: StateInterface = NoBallsLeftState()
+        elif initial_balls == 2:
+            self.current_state: StateInterface = TwoBallsLeftState()
+        else:
+            self.current_state: StateInterface = NoTokenState()
         self.balls_remaining = initial_balls
+        # nombre par défaut à distribuer par vente (1 normalement)
+        self.special_dispense_count = 1
     
     def set_state(self, state: StateInterface) -> None:
         """
